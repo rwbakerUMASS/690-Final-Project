@@ -2,3 +2,5 @@
 __pycache__/
 .DS_Store
 .ipynb_checkpoints
+actor_weights*
+critic_weights*
