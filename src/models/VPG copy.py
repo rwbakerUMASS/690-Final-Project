@@ -9,9 +9,19 @@ import torch
 from torch.distributions.normal import Normal
 import cv2
 import copy
+import metaworld
 
-env_render = gymnasium.make('BipedalWalker-v3',render_mode="human",hardcore=False)
-env_no_render = gymnasium.make('BipedalWalker-v3',hardcore=False)
+ml10 = metaworld.ML10() # Construct the benchmark, sampling tasks
+
+training_envs = []
+for name, env_cls in ml10.train_classes.items():
+  env_no_render = env_cls()
+  env_render = env_cls(render_mode='human')
+  task = random.choice([task for task in ml10.train_tasks
+                        if task.env_name == name])
+  env_render.set_task(task)
+  env_no_render.set_task(task)
+  training_envs.append((env_render,env_no_render))
 
 class Actor(nn.Module):
     def __init__(self, state_dim, n_actions, activation=nn.Tanh):
@@ -69,45 +79,46 @@ def rollout_policy(render,N,std,max_len=500, min_frames=0):
     i = 0
     n_frames = 0
     while i < N or n_frames < min_frames:
-        print(f'Rolling out policy {i+1}/{N}' + ' '*40,end='\r')
-        if render:
-            env = env_render
-        else:
-            env = env_no_render
-
-        # Set up next episode
-        obs, _ = env.reset()
-        done = False
-        episode = []
-        while True:
-            n_frames += 1
-            obs_tensor = torch.tensor(np.expand_dims(obs, axis=0), dtype=torch.float32)
-
-            a_dist = Normal(actor(obs_tensor),std)
-            a = a_dist.sample()
-            logp = torch.sum(a_dist.log_prob(a))
-
-            obs_new, reward, done, trunc, info = env.step(a.detach().numpy()[0])
-            episode.append([obs,a,reward,logp,obs_new])
-            obs = obs_new
-
+        for env_num, (env_render, env_no_render) in enumerate(training_envs):
             if render:
-                env.render()
-            if done or len(episode) > max_len:
-                render = False
-                D.append(episode)
-                break
+                env = env_render
+            else:
+                env = env_no_render
+            print(f'Rolling out policy {i+1}/{N}: {env_num}' + ' '*40,end='\r')
+            # Set up next episode
+            obs, _ = env.reset()
+            done = False
+            episode = []
+            while True:
+                n_frames += 1
+                obs_tensor = torch.tensor(np.expand_dims(obs, axis=0), dtype=torch.float32)
+
+                a_dist = Normal(actor(obs_tensor),std)
+                a = a_dist.sample()
+                logp = torch.sum(a_dist.log_prob(a))
+
+                obs_new, reward, done, trunc, info = env.step(a.detach().numpy()[0])
+                episode.append([obs,a,reward,logp,obs_new])
+                obs = obs_new
+
+                if render:
+                    env.render()
+                if done or trunc or len(episode) > max_len:
+                    D.append(episode)
+                    break
+        
+        render = False
         i += 1
 
     return D
 
 
 if __name__ == '__main__':
-    actor = Actor(24,4)
-    critic = Critic(24)
+    actor = Actor(39,4)
+    critic = Critic(39)
 
-    actor.load_state_dict(torch.load('data/VPG/Third_attempt/actor_weights_499_-14.4783'))
-    critic.load_state_dict(torch.load('data/VPG/Third_attempt/critic_weights_499_-14.4783'))
+    # actor.load_state_dict(torch.load('data/VPG/Third_attempt/actor_weights_499_-14.4783'))
+    # critic.load_state_dict(torch.load('data/VPG/Third_attempt/critic_weights_499_-14.4783'))
 
     actor_optim = torch.optim.Adam(actor.parameters(),lr=0.001)
     critic_optim = torch.optim.Adam(critic.parameters(),lr=0.00025)
@@ -117,13 +128,13 @@ if __name__ == '__main__':
     std = 2
     decay = 0.7
     decay_every = 100
-    num_epiesodes = 25
-    min_frames = 25000
+    num_epiesodes = 1
+    min_frames = 0
 
     try:
         best_best_score = -200
         for i in range(500):
-            episodes = rollout_policy(False,num_epiesodes,std,1600,min_frames)
+            episodes = rollout_policy(False,num_epiesodes,std,500,min_frames)
             
             mat = []
             y = []
@@ -171,7 +182,7 @@ if __name__ == '__main__':
                     actor_losses.append(agent_loss.detach().item())
             actor_optim.step()
 
-            testing = rollout_policy(True,1,0.1,500)
+            testing = rollout_policy(False,1,0.1,500)
             v = 0
             y=[]
             for frame in testing[0][::-1]:
