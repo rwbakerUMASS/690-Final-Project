@@ -3,6 +3,7 @@ import gymnasium
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.callbacks import EvalCallback
+from utils.traj_ranking import rollout_policy
 
 # # Parallel environments
 # vec_env = make_vec_env(ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE['door-open-v2-goal-observable'], n_envs=16)
@@ -29,9 +30,5 @@ env = ALL_V2_ENVIRONMENTS_GOAL_OBSERVABLE['door-open-v2-goal-observable']
 env = env()
 env.render_mode = 'human'
 env = gymnasium.make('BipedalWalker-v3',render_mode="human",hardcore=False)
-obs, _ = env.reset()
 
-while True:
-    action, _states = model.predict(obs,deterministic=True)
-    obs, rewards, dones, truncated, info = env.step(action)
-    env.render()
+rollout_policy(model,env)
