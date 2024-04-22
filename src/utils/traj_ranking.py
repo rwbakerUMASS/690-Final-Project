@@ -16,6 +16,8 @@ class TrajectoryRanking():
             nn.Linear(256,1)
         )
 
+        self.optim = torch.optim.Adam(self.model.parameters())
+
         if not isinstance(policies, list):
             policies=[policies]
 
@@ -33,7 +35,7 @@ class TrajectoryRanking():
         prefs = []
         for policy in self.policies:
             for i in range(self.num_per_policy):
-                pairs.append(rollout_policy(policy, self.env, 2, 100, np.random.randint(0,100)))
+                pairs.append(rollout_policy(policy, self.env, 2, 500, np.random.randint(0,100)))
                 pref = None
                 while pref is None:
                     pref = input('Enter Preference ("0" for first, "1" for second):')
@@ -46,9 +48,25 @@ class TrajectoryRanking():
                 prefs.append(pref)
         return pairs, prefs
 
-    def train(self):
-        # for tra
-        pass
+    def train(self, num_iter):
+        pairs, prefs = self._make_pairs()
+        loss_criterion = nn.CrossEntropyLoss()
+        for i in range(num_iter):
+            losses = []
+            for pair in range(len(pairs)):
+                self.optim.zero_grad()
+                t_i, t_j = pairs[pair]
+                preference = torch.tensor(prefs[pair])
+                t_i = torch.tensor(t_i)
+                t_j = torch.tensor(t_j)
+                r_i = torch.sum(self.model(t_i)).unsqueeze(-1)
+                r_j = torch.sum(self.model(t_j)).unsqueeze(-1)
+                cum_r = torch.cat((r_i,r_j))
+                loss = loss_criterion(cum_r,preference)
+                loss.backward()
+                losses.append(loss.detach().item())
+                self.optim.step()
+            print(f'iter:{i}: {np.round(np.mean(losses),3)}')
 
 
 def rollout_policy(policy, env, n_eps=1, max_steps=1600, seed=0, render=False):
@@ -64,6 +82,7 @@ def rollout_policy(policy, env, n_eps=1, max_steps=1600, seed=0, render=False):
             action, _states = policy.predict(obs,deterministic=False)
             obs, reward, done, truncated, info = env.step(action)
             env.render()
+            steps += 1
         traj.append(obs)
         demos.append(np.array(traj))
     return demos
@@ -71,6 +90,6 @@ def rollout_policy(policy, env, n_eps=1, max_steps=1600, seed=0, render=False):
 
 policy = PPO.load("ppo_cartpole")
 env = gymnasium.make('BipedalWalker-v3',render_mode="human",hardcore=True)
-trex = TrajectoryRanking([policy],env,10)
-pairs = trex._make_pairs()
+trex = TrajectoryRanking([policy],env,4)
+trex.train(100)
 pass
