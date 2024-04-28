@@ -4,3 +4,4 @@ __pycache__/
 .ipynb_checkpoints
 actor_weights*
 critic_weights*
+data/trex
