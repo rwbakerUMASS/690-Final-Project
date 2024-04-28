@@ -79,7 +79,7 @@ class TrajectoryRanking():
         return pairs, prefs
 
     def train(self, num_iter,load=False,random=False):
-        if load:
+        if load and not random:
             pairs = pickle.load(open('data/trex/pairs','rb'))
             prefs = pickle.load(open('data/trex/prefs','rb'))
             test  = pickle.load(open('data/trex/test','rb'))
@@ -195,7 +195,7 @@ if __name__ == '__main__':
     policy = PPO.load("data\\logs\\biped\\basic\\best_model")
     env = gymnasium.make('BipedalWalker-v3',render_mode=None,hardcore=True)
     trex = TrajectoryRanking([policy],env,6000)
-    trex.train(20,True)
+    # trex.train(20,True)
     torch.save(trex.model.state_dict(),'trex_reward_model_NEW')
     trex.model.load_state_dict(torch.load('trex_reward_model_NEW'))
 
@@ -226,5 +226,5 @@ if __name__ == '__main__':
 
     callback_list = CallbackList([eval_callback_hardcore])
 
-    model.learn(total_timesteps=1e7,callback=callback_list)
+    model.learn(total_timesteps=1e7,progress_bar=True,callback=callback_list)
 pass
