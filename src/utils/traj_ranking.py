@@ -75,11 +75,13 @@ class TrajectoryRanking():
         if load:
             pairs = pickle.load(open('data/trex/pairs','rb'))
             prefs = pickle.load(open('data/trex/prefs','rb'))
-            # test  = pickle.load(open('data/trex/test','rb'))
+            test  = pickle.load(open('data/trex/test','rb'))
         else:
             pairs, prefs = self._make_pairs(True)
-        test = self._make_pairs(True,True)
-        pickle.dump(test,open('data/trex/test','wb'))
+            test = self._make_pairs(True,True)
+            pickle.dump(pairs,open('data/trex/pairs','wb'))
+            pickle.dump(prefs,open('data/trex/prefs','wb'))
+            pickle.dump(test,open('data/trex/test','wb'))
         loss_criterion = nn.CrossEntropyLoss()
         best_acc = 0
         best_model = None
