@@ -15,11 +15,17 @@ class TrajectoryRanking():
 
     def __init__(self, policies, env, num_per_policy=10):
         self.model = nn.Sequential(
-            nn.Linear(24,256),
+            nn.Linear(24,64),
             nn.ReLU(),
-            nn.Linear(256,256),
+            nn.Linear(64,128),
             nn.ReLU(),
-            nn.Linear(256,1),
+            nn.Linear(128,256),
+            nn.ReLU(),
+            nn.Linear(256,128),
+            nn.ReLU(),
+            nn.Linear(128,64),
+            nn.ReLU(),
+            nn.Linear(64,1),
             nn.Tanh()
         )
 
@@ -37,16 +43,19 @@ class TrajectoryRanking():
             traj = torch.tensor(traj)
         return torch.sum(self.model(traj))
 
-    def _make_pairs(self, auto=False):
+    def _make_pairs(self, auto=False, test=False):
         pairs = []
         prefs = []
+        num_per_policy = self.num_per_policy
+        if test:
+            num_per_policy = int(num_per_policy * 0.2)
         for policy in self.policies:
-            for i in range(self.num_per_policy):
-                pair, rews = rollout_policy(policy, self.env, 2, 500, i)
-                len = np.min([len(t) for t in pair])
-                pair = [t[:len] for t in pair]
+            for i in tqdm(range(num_per_policy)):
+                pair, rews = rollout_policy(policy, self.env, 2, 500, i+int(test)*num_per_policy)
+                length = np.min([len(t) for t in pair])
+                pair = [t[:length] for t in pair]
                 pairs.append(pair)
-                print(f'{i}:{np.round(rews[0],1)} vs {np.round(rews[1],1)}')
+                # print(f'{i}:{np.round(rews[0],1)} vs {np.round(rews[1],1)}')
                 pref = None
                 if auto:
                     pref = np.argmax(rews)
@@ -66,11 +75,15 @@ class TrajectoryRanking():
         if load:
             pairs = pickle.load(open('data/trex/pairs','rb'))
             prefs = pickle.load(open('data/trex/prefs','rb'))
+            # test  = pickle.load(open('data/trex/test','rb'))
         else:
             pairs, prefs = self._make_pairs(True)
+        test = self._make_pairs(True,True)
+        pickle.dump(test,open('data/trex/test','wb'))
         loss_criterion = nn.CrossEntropyLoss()
+        best_acc = 0
+        best_model = None
         for i in range(num_iter):
-            losses = []
             for pair in range(len(pairs)):
                 self.optim.zero_grad()
                 t_i, t_j = pairs[pair]
@@ -82,9 +95,26 @@ class TrajectoryRanking():
                 cum_r = torch.cat((r_i,r_j))
                 loss = loss_criterion(cum_r,preference)
                 loss.backward()
-                losses.append(int(torch.argmax(cum_r).detach().item()==preference.detach().item()))
                 self.optim.step()
-            print(f'iter:{i}: {np.round(np.mean(losses),3)}')
+            acc = []
+            with torch.no_grad():
+                for pair in range(len(test[0])):
+                    t_i, t_j = test[0][pair]
+                    preference = torch.tensor(test[1][pair])
+                    t_i = torch.tensor(t_i)
+                    t_j = torch.tensor(t_j)
+                    r_i = torch.sum(self.model(t_i)).unsqueeze(-1)
+                    r_j = torch.sum(self.model(t_j)).unsqueeze(-1)
+                    cum_r = torch.cat((r_i,r_j))
+                    loss = loss_criterion(cum_r,preference)
+                    acc.append(int(torch.argmax(cum_r).detach().item()==preference.detach().item()))
+            print(f'iter:{i}: {np.round(np.mean(acc),3)}')
+            if np.mean(acc) > best_acc:
+                print('NEW BEST MODEL!')
+                best_acc = np.mean(acc)
+                best_model = self.model.state_dict()
+        
+        self.model.load_state_dict(best_model)
 
 
 def rollout_policy(policy, env, n_eps=1, max_steps=1600, seed=0, render=False):
@@ -117,15 +147,10 @@ class TrexEnv(BipedalWalker):
         self.steps = 0
 
     def step(self, action):
-        self.steps += 1
-        obs, rew, term, trunc, info = super().step(action)
-        if self.steps > self.max_steps:
-            term = True
-        return obs, rew, term, trunc, info
-
-    def step(self, action):
         obs, rew, term, trunc, info = super().step(action)
         rew = rew * self.model(torch.tensor(obs)).detach().item()
+        if self.steps > self.max_steps:
+            term = True
         return obs, rew, term, trunc, info 
 
     def reset(self, seed=None, options=None):
@@ -158,12 +183,12 @@ class EvalSetSeed(BipedalWalker):
 
 
 if __name__ == '__main__':
-    policy = PPO.load("biped")
+    policy = PPO.load("data\\logs\\biped\\basic\\best_model")
     env = gymnasium.make('BipedalWalker-v3',render_mode=None,hardcore=True)
     trex = TrajectoryRanking([policy],env,6000)
-    trex.train(50,True)
-    torch.save(trex.model.state_dict(),'trex_reward_model')
-    trex.model.load_state_dict(torch.load('trex_reward_model'))
+    trex.train(20,True)
+    torch.save(trex.model.state_dict(),'trex_reward_model_NEW')
+    trex.model.load_state_dict(torch.load('trex_reward_model_NEW'))
 
     trex_env_spec = lambda: TrexEnv(model=trex.model,render_mode=None,hardcore=True)
     env_spec2 = lambda: EvalSetSeed(2000, render_mode=None,hardcore=True)
@@ -174,13 +199,13 @@ if __name__ == '__main__':
     model.env = vec_env
 
     no_progress_callback = StopTrainingOnNoModelImprovement(max_no_improvement_evals=100, min_evals=100, verbose=1)
-    score_threshold_callback = StopTrainingOnRewardThreshold(reward_threshold=300, verbose=1)
+    score_threshold_callback = StopTrainingOnRewardThreshold(reward_threshold=200, verbose=1)
 
     eval_callback_hardcore = EvalCallback(env_spec2(),
                                     callback_on_new_best=score_threshold_callback,
-                                    callback_after_eval=no_progress_callback,
-                                    best_model_save_path="./data/logs/biped/trex/",
-                                    log_path="./data/logs/biped/trex/eval_on_hardcore",
+                                    # callback_after_eval=no_progress_callback,
+                                    best_model_save_path="./data/logs/biped/trex/2",
+                                    log_path="./data/logs/biped/trex/2",
                                     eval_freq=1600,
                                     deterministic=True,
                                     render=False)
@@ -192,5 +217,5 @@ if __name__ == '__main__':
 
     callback_list = CallbackList([eval_callback_hardcore])
 
-    model.learn(total_timesteps=1e10,callback=callback_list)
+    model.learn(total_timesteps=1e7,callback=callback_list)
 pass
