@@ -1,3 +1,6 @@
+import sys
+sys.path.append('src/')
+
 from stable_baselines3 import PPO
 import gymnasium
 from gymnasium.envs.box2d.bipedal_walker import BipedalWalker, BipedalWalkerHardcore
@@ -10,6 +13,7 @@ from stable_baselines3.common.callbacks import EvalCallback, StopTrainingOnRewar
 from typing import TYPE_CHECKING, List, Optional
 import pickle
 from tqdm import tqdm
+from utils.helpers import Create_Random_Trajectories
 
 class TrajectoryRanking():
 
@@ -43,7 +47,7 @@ class TrajectoryRanking():
             traj = torch.tensor(traj)
         return torch.sum(self.model(traj))
 
-    def _make_pairs(self, auto=False, test=False):
+    def _make_pairs(self, auto=False, test=False, random=False):
         pairs = []
         prefs = []
         num_per_policy = self.num_per_policy
@@ -51,7 +55,10 @@ class TrajectoryRanking():
             num_per_policy = int(num_per_policy * 0.2)
         for policy in self.policies:
             for i in tqdm(range(num_per_policy)):
-                pair, rews = rollout_policy(policy, self.env, 2, 500, i+int(test)*num_per_policy)
+                if random:
+                    pair, rews = Create_Random_Trajectories(2, 500)
+                else:
+                    pair, rews = rollout_policy(policy, self.env, 2, 500, i+int(test)*num_per_policy)
                 length = np.min([len(t) for t in pair])
                 pair = [t[:length] for t in pair]
                 pairs.append(pair)
@@ -71,14 +78,14 @@ class TrajectoryRanking():
                 prefs.append(pref)
         return pairs, prefs
 
-    def train(self, num_iter,load=False):
+    def train(self, num_iter,load=False,random=False):
         if load:
             pairs = pickle.load(open('data/trex/pairs','rb'))
             prefs = pickle.load(open('data/trex/prefs','rb'))
             test  = pickle.load(open('data/trex/test','rb'))
         else:
-            pairs, prefs = self._make_pairs(True)
-            test = self._make_pairs(True,True)
+            pairs, prefs = self._make_pairs(True,random=random)
+            test = self._make_pairs(True,True,random=random)
             pickle.dump(pairs,open('data/trex/pairs','wb'))
             pickle.dump(prefs,open('data/trex/prefs','wb'))
             pickle.dump(test,open('data/trex/test','wb'))
